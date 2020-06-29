@@ -250,6 +250,14 @@ under the License.
 			<artifactId>protobuf-java</artifactId>
 			<version>${protobuf.version}</version>
 		</dependency>
+
+		<!-- Hackathon 2020: Windows implemented with a ProcessFunction -->
+
+		<dependency>
+			<groupId>com.ververica</groupId>
+			<artifactId>lab-windowing</artifactId>
+			<version>0.1-SNAPSHOT</version>
+		</dependency>
 	</dependencies>
 
 	<profiles>

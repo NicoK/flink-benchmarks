@@ -21,7 +21,10 @@ package org.apache.flink.benchmark.functions;
 import org.apache.flink.benchmark.CollectSink;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.windowing.assigners.WindowAssigner;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.streaming.api.windowing.windows.Window;
+
+import com.ververica.windowing.WindowWithProcessFunction;
 
 public class IntLongApplications {
     public static <W extends Window> void reduceWithWindow(
@@ -32,6 +35,32 @@ public class IntLongApplications {
                 .keyBy(record -> record.key)
                 .window(windowAssigner)
                 .reduce(new SumReduceIntLong())
-                .addSink(new CollectSink());
+                .addSink(new CollectSink<>());
     }
+    
+    public static <W extends Window> void reduceWithWindowProcessFunction(
+            DataStreamSource<IntegerLongSource.Record> source,
+            WindowAssigner<Object, W> windowAssigner) {
+        source
+                .map(new MultiplyIntLongByTwo())
+                .keyBy(record -> record.key)
+                .window(windowAssigner)
+                .apply(new SumWindowFunctionIntLong<>())
+                .addSink(new CollectSink<>());
+    }
+
+    public static void reduceWindowedWithProcessFunction(
+            DataStreamSource<IntegerLongSource.Record> source,
+            WindowAssigner<Object, TimeWindow> windowAssigner) {
+        source
+                .map(new MultiplyIntLongByTwo())
+                .keyBy(record -> record.key)
+                .process(
+                        new WindowWithProcessFunction<>(
+                                source.getType(),
+                                windowAssigner,
+                                new SumWindowWithProcessFunctionIntLong()))
+                .addSink(new CollectSink<>());
+    }
+
 }
