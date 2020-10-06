@@ -19,12 +19,15 @@
 package org.apache.flink.benchmark.functions;
 
 import org.apache.flink.benchmark.CollectSink;
+import org.apache.flink.benchmark.WindowWithProcessFunctionBenchmarks;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.streaming.api.windowing.assigners.WindowAssigner;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.streaming.api.windowing.windows.Window;
 
 import com.ververica.windowing.WindowWithProcessFunction;
+import com.ververica.windowing.WindowWithProcessFunctionNewAPI;
 
 public class IntLongApplications {
     public static <W extends Window> void reduceWithWindow(
@@ -51,15 +54,28 @@ public class IntLongApplications {
 
     public static void reduceWindowedWithProcessFunction(
             DataStreamSource<IntegerLongSource.Record> source,
-            WindowAssigner<Object, TimeWindow> windowAssigner) {
+            WindowAssigner<Object, TimeWindow> windowAssigner,
+            WindowWithProcessFunctionBenchmarks.StateAPI stateAPI) {
+        final KeyedProcessFunction<Integer, IntegerLongSource.Record, IntegerLongSource.Record>
+                windowWithProcessFunction;
+
+        if (stateAPI == WindowWithProcessFunctionBenchmarks.StateAPI.EXISTING) {
+            windowWithProcessFunction = new WindowWithProcessFunction<>(
+                    source.getType(),
+                    windowAssigner,
+                    new SumWindowWithProcessFunctionIntLong());
+        } else {
+            windowWithProcessFunction = new WindowWithProcessFunctionNewAPI<>(
+                    source.getType(),
+                    windowAssigner,
+                    new SumWindowWithProcessFunctionIntLong());
+        }
+
         source
                 .map(new MultiplyIntLongByTwo())
                 .keyBy(record -> record.key)
                 .process(
-                        new WindowWithProcessFunction<>(
-                                source.getType(),
-                                windowAssigner,
-                                new SumWindowWithProcessFunctionIntLong()))
+                        windowWithProcessFunction)
                 .addSink(new CollectSink<>());
     }
 

@@ -65,13 +65,15 @@ public class WindowWithProcessFunctionBenchmarks extends StateBackendBenchmarkBa
 
 	@Benchmark
 	public void tumblingWindow(TimeWindowContext context) throws Exception {
-		IntLongApplications.reduceWindowedWithProcessFunction(context.source, TumblingEventTimeWindows.of(Time.seconds(10_000)));
+		IntLongApplications.reduceWindowedWithProcessFunction(context.source, TumblingEventTimeWindows.of(Time.seconds(10_000)),
+				context.stateAPI);
 		context.execute();
 	}
 
 	@Benchmark
 	public void slidingWindow(TimeWindowContext context) throws Exception {
-		IntLongApplications.reduceWindowedWithProcessFunction(context.source, SlidingEventTimeWindows.of(Time.seconds(10_000), Time.seconds(1000)));
+		IntLongApplications.reduceWindowedWithProcessFunction(context.source, SlidingEventTimeWindows.of(Time.seconds(10_000), Time.seconds(1000)),
+				context.stateAPI);
 		context.execute();
 	}
 
@@ -81,10 +83,18 @@ public class WindowWithProcessFunctionBenchmarks extends StateBackendBenchmarkBa
 //		context.execute();
 //	}
 
+	public enum StateAPI {
+		EXISTING,
+		TEMPORAL_STATE
+	}
+
 	@State(Thread)
 	public static class TimeWindowContext extends StateBackendContext {
 		@Param({"ROCKS_INC"})
 		public StateBackend stateBackend = StateBackend.MEMORY;
+
+		@Param({"TEMPORAL_STATE"})
+		public StateAPI stateAPI = StateAPI.TEMPORAL_STATE;
 
 		@Setup
 		@Override
