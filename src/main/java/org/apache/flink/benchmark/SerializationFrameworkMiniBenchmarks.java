@@ -112,6 +112,7 @@ public class SerializationFrameworkMiniBenchmarks extends BenchmarkBase {
 		executionConfig.enableForceKryo();
 		executionConfig.registerKryoType(MyPojo.class);
 		executionConfig.registerKryoType(MyOperation.class);
+		executionConfig.registerKryoType(MyOperation[].class);
 
 		env.addSource(new PojoSource(RECORDS_PER_INVOCATION, 10))
 				.rebalance()
