@@ -21,14 +21,24 @@ package org.apache.flink.benchmark;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeinfo.Types;
+import org.apache.flink.api.common.typeutils.SimpleTypeSerializerSnapshot;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
+import org.apache.flink.api.common.typeutils.TypeSerializerSnapshot;
+import org.apache.flink.api.common.typeutils.base.GenericArraySerializer;
+import org.apache.flink.api.common.typeutils.base.TypeSerializerSingleton;
+import org.apache.flink.api.common.typeutils.base.array.StringArraySerializer;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.tuple.Tuple8;
 import org.apache.flink.api.java.typeutils.ResultTypeQueryable;
+import org.apache.flink.api.java.typeutils.runtime.kryo.KryoSerializer;
 import org.apache.flink.benchmark.full.StringSerializationBenchmark;
 import org.apache.flink.benchmark.functions.BaseSourceWithKeyRange;
+import org.apache.flink.core.memory.DataInputView;
+import org.apache.flink.core.memory.DataOutputView;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.sink.DiscardingSink;
 import org.apache.flink.types.Row;
+import org.apache.flink.types.StringValue;
 
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.OperationsPerInvocation;
@@ -38,6 +48,7 @@ import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 import org.openjdk.jmh.runner.options.VerboseMode;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
@@ -471,6 +482,203 @@ public class SerializationFrameworkMiniBenchmarks extends BenchmarkBase {
 		}
 	}
 
+	public static class MyPojoTypeInfo extends TypeInformation<MyPojo> {
+	
+		private final int totalFields;
+
+		public MyPojoTypeInfo() {
+			totalFields = getArity() + Types.OBJECT_ARRAY(Types.STRING).getTotalFields() + Types.OBJECT_ARRAY(new MyOperationInfo()).getTotalFields();
+		}
+
+		@Override
+		public boolean isBasicType() {
+			return false;
+		}
+
+		@Override
+		public boolean isTupleType() {
+			return false;
+		}
+
+		@Override
+		public int getArity() {
+			return 8;
+		}
+
+		@Override
+		public int getTotalFields() {
+			return totalFields;
+		}
+
+		@Override
+		public Class<MyPojo> getTypeClass() {
+			return MyPojo.class;
+		}
+
+		@Override
+		public boolean isKeyType() {
+			return false;
+		}
+
+		@Override
+		public TypeSerializer<MyPojo> createSerializer(ExecutionConfig config) {
+			return new MyPojoTypeSerializer();
+		}
+
+		@Override
+		public String toString() {
+			return "MyPojoType";
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (obj instanceof MyPojoTypeInfo) {
+				MyPojoTypeInfo other = (MyPojoTypeInfo) obj;
+				return other.canEqual(this);
+			} else {
+				return false;
+			}
+		}
+
+		@Override
+		public int hashCode() {
+			return MyPojoTypeInfo.class.hashCode();
+		}
+
+		@Override
+		public boolean canEqual(Object obj) {
+			return obj instanceof MyPojoTypeInfo;
+		}
+
+		private static class MyPojoTypeSerializer extends
+				TypeSerializerSingleton<MyPojo> {
+
+			private final StringArraySerializer stringArraySerializer = new StringArraySerializer();
+			private final GenericArraySerializer<MyOperation> operationArraySerializer =
+					new GenericArraySerializer<>(
+							MyOperation.class,
+							new MyOperationInfo.MyOperationTypeSerializer());
+			// not using the actual ExecutionConfig may be a bit hacky but is good enough for our use case
+			private final KryoSerializer<Object> objectSerializer = new KryoSerializer<>(Object.class, new ExecutionConfig());
+
+			public static final MyPojoTypeSerializer INSTANCE =
+					new MyPojoTypeSerializer();
+
+			@Override
+			public boolean isImmutableType() {
+				return false;
+			}
+
+			@Override
+			public MyPojo createInstance() {
+				return new MyPojo();
+			}
+
+			@Override
+			public MyPojo copy(MyPojo from) {
+				return new MyPojo(
+						from.id,
+						from.name,
+						stringArraySerializer.copy(from.operationNames),
+						operationArraySerializer.copy(from.operations),
+						from.otherId1,
+						from.otherId2,
+						from.otherId3,
+						objectSerializer.copy(from.someObject));
+			}
+
+			@Override
+			public MyPojo copy(MyPojo from, MyPojo reuse) {
+				reuse.id = from.id;
+				reuse.name = from.name;
+				reuse.operationNames = stringArraySerializer.copy(from.operationNames, reuse.operationNames);
+				reuse.operations = operationArraySerializer.copy(from.operations, reuse.operations);
+				reuse.otherId1 = from.otherId1;
+				reuse.otherId2 = from.otherId2;
+				reuse.otherId3 = from.otherId3;
+				reuse.someObject = objectSerializer.copy(from.someObject, reuse.someObject);
+
+				return reuse;
+			}
+
+			@Override
+			public int getLength() {
+				return -1;
+			}
+
+			@Override
+			public void serialize(MyPojo record, DataOutputView target) throws IOException {
+				target.writeInt(record.id);
+				StringValue.writeString(record.name, target);
+				stringArraySerializer.serialize(record.operationNames, target);
+				operationArraySerializer.serialize(record.operations, target);
+				target.writeInt(record.otherId1);
+				target.writeInt(record.otherId2);
+				target.writeInt(record.otherId3);
+				objectSerializer.serialize(record.someObject, target);
+			}
+
+			@Override
+			public MyPojo deserialize(DataInputView source) throws IOException {
+				int id = source.readInt();
+				String name = StringValue.readString(source);
+				String[] operationNames = stringArraySerializer.deserialize(source);
+				MyOperation[] operations = operationArraySerializer.deserialize(source);
+				int otherId1 = source.readInt();
+				int otherId2 = source.readInt();
+				int otherId3 = source.readInt();
+				Object someObject = objectSerializer.deserialize(source);
+				return new MyPojo(id, name, operationNames, operations, otherId1, otherId2,
+						otherId3, someObject);
+			}
+
+			@Override
+			public MyPojo deserialize(MyPojo reuse, DataInputView source)
+					throws IOException {
+				reuse.id = source.readInt();
+				reuse.name = StringValue.readString(source);
+				reuse.operationNames = stringArraySerializer.deserialize(reuse.operationNames, source);
+				reuse.operations = operationArraySerializer.deserialize(reuse.operations, source);
+				reuse.otherId1 = source.readInt();
+				reuse.otherId2 = source.readInt();
+				reuse.otherId3 = source.readInt();
+				reuse.someObject = objectSerializer.deserialize(reuse.someObject, source);
+				return reuse;
+			}
+
+			@Override
+			public void copy(DataInputView source, DataOutputView target) throws IOException {
+				target.writeInt(source.readInt());
+				StringValue.copyString(source, target);
+				stringArraySerializer.copy(source, target);
+				operationArraySerializer.copy(source, target);
+				target.writeInt(source.readInt());
+				target.writeInt(source.readInt());
+				target.writeInt(source.readInt());
+				objectSerializer.copy(source, target);
+			}
+
+			@Override
+			public TypeSerializerSnapshot<MyPojo> snapshotConfiguration() {
+				return new MyPojoTypeSerializerSnapshot();
+			}
+
+			// ------------------------------------------------------------------------
+
+			/**
+			 * Serializer configuration snapshot for compatibility and format evolution.
+			 */
+			public static final class MyPojoTypeSerializerSnapshot extends
+					SimpleTypeSerializerSnapshot<MyPojo> {
+
+				@SuppressWarnings("WeakerAccess")
+				public MyPojoTypeSerializerSnapshot() {
+					super(() -> INSTANCE);
+				}
+			}
+		}
+	}
+
 	/**
 	 * Another POJO.
 	 */
@@ -509,6 +717,149 @@ public class SerializationFrameworkMiniBenchmarks extends BenchmarkBase {
 
 		public static Row createRow(int id, String name) {
 			return Row.of(id, name);
+		}
+	}
+
+	public static class MyOperationInfo extends TypeInformation<MyOperation> {
+
+		@Override
+		public boolean isBasicType() {
+			return false;
+		}
+
+		@Override
+		public boolean isTupleType() {
+			return false;
+		}
+
+		@Override
+		public int getArity() {
+			return 2;
+		}
+
+		@Override
+		public int getTotalFields() {
+			return 2;
+		}
+
+		@Override
+		public Class<MyOperation> getTypeClass() {
+			return MyOperation.class;
+		}
+
+		@Override
+		public boolean isKeyType() {
+			return true;
+		}
+
+		@Override
+		public TypeSerializer<MyOperation> createSerializer(ExecutionConfig config) {
+			return new MyOperationTypeSerializer();
+		}
+
+		@Override
+		public String toString() {
+			return "MyOperationType";
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (obj instanceof MyOperationInfo) {
+				MyOperationInfo other = (MyOperationInfo) obj;
+				return other.canEqual(this);
+			} else {
+				return false;
+			}
+		}
+
+		@Override
+		public int hashCode() {
+			return MyOperationInfo.class.hashCode();
+		}
+
+		@Override
+		public boolean canEqual(Object obj) {
+			return obj instanceof MyOperationInfo;
+		}
+
+		private static class MyOperationTypeSerializer extends
+				TypeSerializerSingleton<MyOperation> {
+
+			public static final MyOperationTypeSerializer INSTANCE =
+					new MyOperationTypeSerializer();
+
+			@Override
+			public boolean isImmutableType() {
+				return false;
+			}
+
+			@Override
+			public MyOperation createInstance() {
+				return new MyOperation();
+			}
+
+			@Override
+			public MyOperation copy(MyOperation from) {
+				return new MyOperation(from.id, from.name);
+			}
+
+			@Override
+			public MyOperation copy(MyOperation from, MyOperation reuse) {
+				reuse.id = from.id;
+				reuse.name = from.name;
+				return reuse;
+			}
+
+			@Override
+			public int getLength() {
+				return -1;
+			}
+
+			@Override
+			public void serialize(MyOperation record, DataOutputView target) throws IOException {
+				target.writeInt(record.id);
+				StringValue.writeString(record.name, target);
+			}
+
+			@Override
+			public MyOperation deserialize(DataInputView source) throws IOException {
+				int id = source.readInt();
+				String name = StringValue.readString(source);
+				return new MyOperation(id, name);
+			}
+
+			@Override
+			public MyOperation deserialize(MyOperation reuse, DataInputView source)
+					throws IOException {
+				reuse.id = source.readInt();
+				reuse.name = StringValue.readString(source);
+				return reuse;
+			}
+
+			@Override
+			public void copy(DataInputView source, DataOutputView target) throws IOException {
+				target.writeInt(source.readInt());
+				StringValue.copyString(source, target);
+			}
+
+			@Override
+			public TypeSerializerSnapshot<MyOperation> snapshotConfiguration() {
+				return new MyOperationTypeSerializerSnapshot();
+			}
+
+			// ------------------------------------------------------------------------
+
+			/**
+			 * Serializer configuration snapshot for compatibility and format evolution.
+			 */
+			public static final class MyOperationTypeSerializerSnapshot extends
+					SimpleTypeSerializerSnapshot<MyOperation> {
+
+				@SuppressWarnings("WeakerAccess")
+				public MyOperationTypeSerializerSnapshot() {
+					super(() -> INSTANCE);
+				}
+			}
 		}
 	}
 }

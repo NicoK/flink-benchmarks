@@ -164,6 +164,20 @@ public class SerializationFrameworkAllBenchmarks extends SerializationFrameworkM
 		env.execute();
 	}
 
+	@Benchmark
+	@OperationsPerInvocation(value = SerializationFrameworkMiniBenchmarks.RECORDS_PER_INVOCATION)
+	public void serializerCustom(FlinkEnvironmentContext context) throws Exception {
+		StreamExecutionEnvironment env = context.env;
+		env.setParallelism(4);
+
+		env.addSource(new PojoSource(RECORDS_PER_INVOCATION, 10))
+				.returns(new MyPojoTypeInfo())
+				.rebalance()
+				.addSink(new DiscardingSink<>());
+
+		env.execute();
+	}
+
 	/**
 	 * Source emitting an Avro GenericRecord.
 	 */
